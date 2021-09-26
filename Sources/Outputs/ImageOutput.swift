@@ -7,7 +7,7 @@
 
 import AVFoundation
 
-@available(OSX, deprecated: 10.15)
+@available(iOS, deprecated: 10.0) @available(macOS, deprecated: 10.15)
 class ImageOutput: Capturable {
     
     private var _output = AVCaptureStillImageOutput()

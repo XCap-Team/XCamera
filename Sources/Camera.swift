@@ -9,8 +9,11 @@ import Foundation
 import AVFoundation
 
 fileprivate func createCaptureOutput(session: AVCaptureSession) -> Capturable? {
-    if #available(OSX 10.15, *) { return PhotoOutput(session: session) }
-    else                        { return ImageOutput(session: session) }
+    if #available(macOS 10.15, iOS 10.0, *) {
+        return PhotoOutput(session: session)
+    } else {
+        return ImageOutput(session: session)
+    }
 }
 
 extension Notification.Name {
@@ -27,8 +30,6 @@ public enum CameraError: Error {
 public protocol CameraDelegate: AnyObject {
     func cameraWasDisconnected(_ camera: Camera)
     
-//    func camera(_ camera: Camera, didOutput frame: CMSampleBuffer)
-    
     func camera(_ camera: Camera, formatDidChange format: AVCaptureDevice.Format)
     func camera(_ camera: Camera, frameRateRangeDidChange range: AVFrameRateRange)
     func camera(_ camera: Camera, recordingStateDidChange state: Camera.RecordingState)
@@ -36,28 +37,29 @@ public protocol CameraDelegate: AnyObject {
 
 extension Camera {
     
+    #if os(macOS)
     public static var videoDevices: [AVCaptureDevice] {
-        if #available(OSX 10.15, *) {
-            let discoverySession1 = AVCaptureDevice.DiscoverySession(
+        if #available(macOS 10.15, *) {
+            let discoverySession = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [.builtInWideAngleCamera, .externalUnknown],
                 mediaType: .video,
                 position: .unspecified
             )
-            let discoverySession2 = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.externalUnknown],
-                mediaType: .muxed,
-                position: .unspecified
-            )
-            return discoverySession1.devices + discoverySession2.devices
+            return discoverySession.devices
         } else {
             return AVCaptureDevice.devices(for: .video)
         }
     }
+    #endif
     
     public enum RecordingState {
         case began(URL)
+        
+        #if os(macOS)
         case paused(URL)
         case resumed(URL)
+        #endif
+        
         case finished(URL, Error?)
     }
     
@@ -87,6 +89,7 @@ public class Camera {
     
     public var name: String { device.localizedName }
     public var uniqueID: String { device.uniqueID }
+    @available(iOS 14.0, *)
     public var manufacturer: String { device.manufacturer }
     public var modelID: String { device.modelID }
     
@@ -111,7 +114,10 @@ public class Camera {
     
     // Recording
     public var isRecording: Bool { movieOutput.isRecording }
+    
+    #if os(macOS)
     public var isRecordingPaused: Bool { movieOutput.isPaused }
+    #endif
     
     public init(device: AVCaptureDevice, preset: AVCaptureSession.Preset = .high) throws {
         guard device.hasMediaType(.video) else {
@@ -189,6 +195,7 @@ public class Camera {
             self.delegate?.camera(self, recordingStateDidChange: .began(fileURL))
         }
         
+        #if os(macOS)
         movieOutput.didPause = { [weak self] fileURL in
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
@@ -198,6 +205,7 @@ public class Camera {
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
         }
+        #endif
         
         movieOutput.didFinish = { [weak self] fileURL, error in
             guard let self = self else { return }
@@ -308,6 +316,7 @@ public class Camera {
         movieOutput.startRecording(flipOptions: flipOptions)
     }
     
+    #if os(macOS)
     public func pauseRecording() {
         movieOutput.pauseRecording()
     }
@@ -315,6 +324,7 @@ public class Camera {
     public func resumeRecording() {
         movieOutput.resumeRecording()
     }
+    #endif
     
     public func stopRecording() {
         movieOutput.stopRecording()

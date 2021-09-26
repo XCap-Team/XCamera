@@ -9,7 +9,7 @@ import AVFoundation
 
 private let formatKey = kCVPixelBufferPixelFormatTypeKey as String
 
-@available(OSX 10.15, *)
+@available(macOS 10.15, iOS 10.0, *)
 class PhotoOutput: NSObject, AVCapturePhotoCaptureDelegate, Capturable {
     
     private let _output = AVCapturePhotoOutput()
@@ -44,6 +44,13 @@ class PhotoOutput: NSObject, AVCapturePhotoCaptureDelegate, Capturable {
     
     // MARK: - AVCapturePhotoCaptureDelegate
     
+    #if os(iOS)
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photoSampleBuffer: CMSampleBuffer?, previewPhoto previewPhotoSampleBuffer: CMSampleBuffer?, resolvedSettings: AVCaptureResolvedPhotoSettings, bracketSettings: AVCaptureBracketedStillImageSettings?, error: Error?) {
+        
+    }
+    #endif
+    
+    @available(iOS 11.0, *)
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         let id = photo.resolvedSettings.uniqueID
         
