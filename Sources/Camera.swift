@@ -32,7 +32,10 @@ public protocol CameraDelegate: AnyObject {
     
     func camera(_ camera: Camera, formatDidChange format: AVCaptureDevice.Format)
     func camera(_ camera: Camera, frameRateRangeDidChange range: AVFrameRateRange)
+    
+    #if os(macOS)
     func camera(_ camera: Camera, recordingStateDidChange state: Camera.RecordingState)
+    #endif
 }
 
 extension Camera {
@@ -52,16 +55,14 @@ extension Camera {
     }
     #endif
     
+    #if os(macOS)
     public enum RecordingState {
         case began(URL)
-        
-        #if os(macOS)
         case paused(URL)
         case resumed(URL)
-        #endif
-        
         case finished(URL, Error?)
     }
+    #endif
     
 }
 
@@ -70,8 +71,10 @@ public class Camera {
     private let session: AVCaptureSession = AVCaptureSession()
     private let deviceInput: AVCaptureDeviceInput
     private let captureOutput: Capturable
-    private let movieOutput: MovieOutput
     private var frameOutput: FrameOutput?
+    #if os(macOS)
+    private let movieOutput: MovieOutput
+    #endif
     
     private var notificationObservers: [NSObjectProtocol] = []
     private var keyValueObservations: [NSKeyValueObservation] = []
@@ -113,53 +116,41 @@ public class Camera {
     public var activeFrameRateRange: AVFrameRateRange? { device.activeFrameRateRange }
     
     // Recording
-    public var isRecording: Bool { movieOutput.isRecording }
-    
     #if os(macOS)
+    public var isRecording: Bool { movieOutput.isRecording }
     public var isRecordingPaused: Bool { movieOutput.isPaused }
     #endif
     
-    public init(device: AVCaptureDevice, preset: AVCaptureSession.Preset = .high) throws {
-        guard device.hasMediaType(.video) else {
-            throw CameraError.notVideoDevice
-        }
+    public init(device: AVCaptureDevice, preset: AVCaptureSession.Preset? = nil) throws {
+        guard device.hasMediaType(.video) else { throw CameraError.notVideoDevice }
         
-        // Add capture output
-        if let output = createCaptureOutput(session: session) {
-            captureOutput = output
-        } else {
-            throw CameraError.createCaptureInputFailed
-        }
+        session.beginConfiguration()
         
-        // Add movie output
-        if let output = MovieOutput(session: session) {
-            movieOutput = output
-        } else {
-            throw CameraError.createMovieOutputFailed
+        if let preset = preset, device.supportsSessionPreset(preset) {
+            session.sessionPreset = preset
         }
         
         // Create device input
-        do {
-            deviceInput = try .init(device: device)
-        } catch {
-            throw CameraError.invalidDevice
-        }
-        
-        // Check if the input is available for the session
-        guard session.canAddInput(deviceInput) else {
-            throw CameraError.invalidDevice
-        }
-        
-        if session.canSetSessionPreset(preset) {
-            session.sessionPreset = preset
-        }
-        if !device.supportsSessionPreset(session.sessionPreset) {
-            session.sessionPreset = .high
-        }
+        guard let deviceInput = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(deviceInput)
+        else { throw CameraError.invalidDevice }
         session.addInput(deviceInput)
+        self.deviceInput = deviceInput
+        
+        // Add capture output
+        guard let output = createCaptureOutput(session: session) else { throw CameraError.createCaptureInputFailed }
+        captureOutput = output
+        
+        // Add movie output
+        #if os(macOS)
+        guard let output = MovieOutput(session: session) else { throw CameraError.createMovieOutputFailed }
+        movieOutput = output
+        setupMovieOutput()
+        #endif
+        
+        session.commitConfiguration()
         
         setupObservers()
-        setupMovieOutput()
     }
     
     deinit {
@@ -189,13 +180,13 @@ public class Camera {
         ]
     }
     
+    #if os(macOS)
     private func setupMovieOutput() {
         movieOutput.didStart = { [weak self] fileURL in
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .began(fileURL))
         }
         
-        #if os(macOS)
         movieOutput.didPause = { [weak self] fileURL in
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
@@ -205,13 +196,13 @@ public class Camera {
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
         }
-        #endif
         
         movieOutput.didFinish = { [weak self] fileURL, error in
             guard let self = self else { return }
             self.delegate?.camera(self, recordingStateDidChange: .finished(fileURL, error))
         }
     }
+    #endif
     
     private func invalidate() {
         guard isValid else { return }
@@ -312,11 +303,11 @@ public class Camera {
         captureOutput.capture(flipOptions: flipOptions, completionHandler)
     }
     
+    #if os(macOS)
     public func startRecording() -> Bool {
         movieOutput.startRecording(flipOptions: flipOptions)
     }
     
-    #if os(macOS)
     public func pauseRecording() {
         movieOutput.pauseRecording()
     }
@@ -324,11 +315,11 @@ public class Camera {
     public func resumeRecording() {
         movieOutput.resumeRecording()
     }
-    #endif
     
     public func stopRecording() {
         movieOutput.stopRecording()
     }
+    #endif
     
     public func createPreviewLayer() -> AVCaptureVideoPreviewLayer {
         let layer = AVCaptureVideoPreviewLayer(session: session)
@@ -359,7 +350,11 @@ extension Camera {
         session.inputs.filter { $0 != deviceInput }
     }
     public var outputs: [AVCaptureOutput] {
-        session.outputs.filter { $0 != captureOutput.output && $0 != movieOutput.output }
+        #if os(macOS)
+        session.outputs.filter { $0 != captureOutput.output && $0 != frameOutput?.output && $0 != movieOutput.output }
+        #else
+        session.outputs.filter { $0 != captureOutput.output && $0 != frameOutput?.output }
+        #endif
     }
     
     @discardableResult
