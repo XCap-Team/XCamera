@@ -2,9 +2,10 @@
 //  AVCaptureConnection+Ext.swift
 //  
 //
-//  Created by chen on 2021/4/21.
+//  Created by scchn on 2021/9/27.
 //
 
+import Foundation
 import AVFoundation
 
 extension AVCaptureConnection {

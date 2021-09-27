@@ -2,40 +2,20 @@
 //  Camera.swift
 //  
 //
-//  Created by chen on 2021/4/21.
+//  Created by scchn on 2021/9/27.
 //
 
 import Foundation
 import AVFoundation
-
-fileprivate func createCaptureOutput(session: AVCaptureSession) -> Capturable? {
-    if #available(macOS 10.15, iOS 10.0, *) {
-        return PhotoOutput(session: session)
-    } else {
-        return ImageOutput(session: session)
-    }
-}
 
 extension Notification.Name {
     static let _flipOptionsWereChanged = Notification.Name("com.scchn.XCamera._flipOptionsWereChanged")
 }
 
 public enum CameraError: Error {
-    case notVideoDevice
-    case invalidDevice
-    case createCaptureInputFailed
-    case createMovieOutputFailed
-}
-
-public protocol CameraDelegate: AnyObject {
-    func cameraWasDisconnected(_ camera: Camera)
-    
-    func camera(_ camera: Camera, formatDidChange format: AVCaptureDevice.Format)
-    func camera(_ camera: Camera, frameRateRangeDidChange range: AVFrameRateRange)
-    
-    #if os(macOS)
-    func camera(_ camera: Camera, recordingStateDidChange state: Camera.RecordingState)
-    #endif
+    case runtimeError
+    case disconnected
+    case cancelled
 }
 
 extension Camera {
@@ -55,176 +35,176 @@ extension Camera {
     }
     #endif
     
-    #if os(macOS)
-    public enum RecordingState {
-        case began(URL)
-        case paused(URL)
-        case resumed(URL)
-        case finished(URL, Error?)
-    }
-    #endif
-    
 }
 
 public class Camera {
     
-    private let session: AVCaptureSession = AVCaptureSession()
-    private let deviceInput: AVCaptureDeviceInput
-    private let captureOutput: Capturable
-    private var frameOutput: FrameOutput?
-    #if os(macOS)
-    private let movieOutput: MovieOutput
-    #endif
+    private let session = AVCaptureSession()
+    private let videoInput: AVCaptureDeviceInput
+    private var audioInput: AVCaptureDeviceInput?
     
-    private var notificationObservers: [NSObjectProtocol] = []
     private var keyValueObservations: [NSKeyValueObservation] = []
-    private var retainedLayers = NSHashTable<AVCaptureVideoPreviewLayer>(options: [.weakMemory])
-    private var flipOptionsForFrameOutput: NSObjectProtocol?
+    private var notificationObservers: [NSObjectProtocol] = []
     
-    weak
-    public var delegate: CameraDelegate?
+    private var videoPreviewLayers = NSHashTable<AVCaptureVideoPreviewLayer>(options: [.weakMemory])
     
-    public var device: AVCaptureDevice  { deviceInput.device }
-    public var preset: AVCaptureSession.Preset { session.sessionPreset }
-    
-    private(set)
-    public var isValid = true
-    public var isRunning: Bool { session.isRunning }
-    
-    public var name: String { device.localizedName }
-    public var uniqueID: String { device.uniqueID }
-    @available(iOS 14.0, *)
-    public var manufacturer: String { device.manufacturer }
-    public var modelID: String { device.modelID }
-    
-    // Flip
     public var flipOptions: FlipOptions = .default {
-        didSet {
-            #if os(macOS)
-            movieOutput.applyFlipOptions(flipOptions)
-            #endif
-            
-            frameOutput?.applyFlipOptions(flipOptions)
-            
-            NotificationCenter.default.post(name: ._flipOptionsWereChanged, object: self)
-        }
+        didSet { didChangeFlipOptions() }
     }
     
-    // Frame
-    public var isFrameOutputEnabled: Bool { frameOutput != nil }
-    public var frameOutputHandler: ((CMSampleBuffer) -> Void)?
+    private(set)
+    public var isValid: Bool = true
+    
+    // Device
+    public var videoDevice: AVCaptureDevice { videoInput.device }
+    public var audioDevice: AVCaptureDevice? { audioInput?.device }
+    
+    // Deivce Info
+    public var isRunning: Bool { session.isRunning }
+    public var name: String { videoDevice.localizedName }
+    public var uniqueID: String { videoDevice.uniqueID }
+    public var modelID: String { videoDevice.modelID }
+    public var preset: AVCaptureSession.Preset {
+        get { session.sessionPreset }
+        set { session.sessionPreset = newValue }
+    }
+    
+    @available(iOS 14.0, *)
+    public var manufacturer: String { videoDevice.manufacturer }
     
     // Format
-    public var formats: [AVCaptureDevice.Format] { device.formats }
-    public var activeFormat: AVCaptureDevice.Format { device.activeFormat }
-    public var dimensions: CGSize { activeFormat.dimensions }
+    public var formats: [AVCaptureDevice.Format] { videoDevice.formats }
+    public var activeFormat: AVCaptureDevice.Format { videoDevice.activeFormat }
     
-    // Frame-Rate Range
-    public var frameRateRanges: [AVFrameRateRange] { device.activeFormat.videoSupportedFrameRateRanges }
-    public var activeFrameRateRange: AVFrameRateRange? { device.activeFrameRateRange }
+    // Frame Rate Range
+    public var frameRateRanges: [AVFrameRateRange] { videoDevice.activeFormat.videoSupportedFrameRateRanges }
+    public var activeFrameRateRange: AVFrameRateRange? { videoDevice.activeFrameRateRange }
     
-    // Recording
-    #if os(macOS)
-    public var isRecording: Bool { movieOutput.isRecording }
-    public var isRecordingPaused: Bool { movieOutput.isPaused }
-    #endif
+    // Event Handlers
+    public var formatUpdateHandler: ((AVCaptureDevice.Format) -> Void)?
+    public var frameRateRangeUpdateHandler: ((AVFrameRateRange) -> Void)?
+    public var audioDeviceRemoveHandler: (() -> Void)?
+    public var didBecomeInvalid: ((CameraError) -> Void)?
     
-    public init(device: AVCaptureDevice, preset: AVCaptureSession.Preset? = nil) throws {
-        guard device.hasMediaType(.video) else { throw CameraError.notVideoDevice }
-        
-        session.beginConfiguration()
-        
-        if let preset = preset, device.supportsSessionPreset(preset) {
-            session.sessionPreset = preset
+    public init?(videoDevice: AVCaptureDevice) {
+        guard videoDevice.hasMediaType(.video),
+              let videoInput = try? AVCaptureDeviceInput(device: videoDevice),
+              session.canAddInput(videoInput)
+        else {
+            return nil
         }
         
-        // Create device input
-        guard let deviceInput = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(deviceInput)
-        else { throw CameraError.invalidDevice }
-        session.addInput(deviceInput)
-        self.deviceInput = deviceInput
-        
-        // Add capture output
-        guard let output = createCaptureOutput(session: session) else { throw CameraError.createCaptureInputFailed }
-        captureOutput = output
-        
-        // Add movie output
-        #if os(macOS)
-        guard let output = MovieOutput(session: session) else { throw CameraError.createMovieOutputFailed }
-        movieOutput = output
-        setupMovieOutput()
-        #endif
-        
+        session.beginConfiguration()
+        session.addInput(videoInput)
         session.commitConfiguration()
+        self.videoInput = videoInput
         
-        setupObservers()
+        setupKeyValueObservations()
+        setupNotificationObservers()
     }
     
     deinit {
-        invalidate()
-        print(#function, self)
+        invalidate(with: nil)
+        
+        #if DEBUG
+        print("XCamera -> deinit")
+        #endif
     }
     
-    private func setupObservers() {
-        let nc = NotificationCenter.default
+    private func setupKeyValueObservations() {
+        let formatObservation = videoDevice.observe(
+            \.activeFormat,
+             options: [.initial, .new]
+        ) { [weak self] device, _ in
+            guard let self = self else { return }
+            self.formatUpdateHandler?(device.activeFormat)
+        }
         
-        notificationObservers += [
-            nc.addObserver(forName: .AVCaptureDeviceWasDisconnected, object: nil, queue: .main) { [weak self] noti in
-                guard let self = self, self.device == noti.object as? AVCaptureDevice else { return }
-                self.invalidate()
+        let frameRateRangeObservation = videoDevice.observe(
+            \.activeVideoMinFrameDuration,
+             options: [.initial, .new]
+        ) { [weak self] device, _ in
+            guard let self = self, let range = device.activeFrameRateRange else { return }
+            self.frameRateRangeUpdateHandler?(range)
+        }
+        
+        keyValueObservations = [formatObservation, frameRateRangeObservation]
+    }
+    
+    private func setupNotificationObservers() {
+        let center = NotificationCenter.default
+        
+        let runtimeErrorObserver = center.addObserver(
+            forName: .AVCaptureDeviceWasDisconnected,
+            object: nil,
+            queue: .main
+        ) { [weak self] noti in
+            guard let self = self, self.session == noti.object as? AVCaptureSession else { return }
+            self.invalidate(with: .runtimeError)
+        }
+        
+        let disconnectionObserver = center.addObserver(
+            forName: .AVCaptureDeviceWasDisconnected,
+            object: nil,
+            queue: .main
+        ) { [weak self] noti in
+            guard let self = self, let device = noti.object as? AVCaptureDevice else { return }
+            
+            if device == self.videoDevice {
+                self.invalidate(with: .disconnected)
+            } else if device == self.audioDevice {
+                self.removeAudioDevice()
             }
-        ]
+        }
         
-        keyValueObservations += [
-            device.observe(\.activeFormat, options: [.initial, .new]) { [weak self] device, _ in
-                guard let self = self else { return }
-                self.delegate?.camera(self, formatDidChange: device.activeFormat)
-            },
-            device.observe(\.activeVideoMinFrameDuration, options: [.initial, .new]) { [weak self] device, _ in
-                guard let self = self, let range = self.activeFrameRateRange else { return }
-                self.delegate?.camera(self, frameRateRangeDidChange: range)
+        notificationObservers = [disconnectionObserver, runtimeErrorObserver]
+    }
+    
+    private func didChangeFlipOptions() {
+        session.outputs.forEach { output in
+            guard let connection = output.connection(with: .video) else {
+                return
             }
-        ]
+            connection.applyFlipOptions(flipOptions)
+        }
+        
+        NotificationCenter.default.post(name: ._flipOptionsWereChanged, object: self)
     }
     
-    #if os(macOS)
-    private func setupMovieOutput() {
-        movieOutput.didStart = { [weak self] fileURL in
-            guard let self = self else { return }
-            self.delegate?.camera(self, recordingStateDidChange: .began(fileURL))
-        }
-        
-        movieOutput.didPause = { [weak self] fileURL in
-            guard let self = self else { return }
-            self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
-        }
-        
-        movieOutput.didResume = { [weak self] fileURL in
-            guard let self = self else { return }
-            self.delegate?.camera(self, recordingStateDidChange: .resumed(fileURL))
-        }
-        
-        movieOutput.didFinish = { [weak self] fileURL, error in
-            guard let self = self else { return }
-            self.delegate?.camera(self, recordingStateDidChange: .finished(fileURL, error))
+    private func validationCheck() {
+        if !isValid {
+            fatalError("Unavailable camera.")
         }
     }
-    #endif
     
-    private func invalidate() {
+    private func configure(_ configurationHandler: () -> Void) -> Bool {
+        do {
+            try videoDevice.lockForConfiguration()
+            session.beginConfiguration()
+            
+            configurationHandler()
+            
+            session.commitConfiguration()
+            videoDevice.unlockForConfiguration()
+            return true
+        } catch {
+            return false
+        }
+    }
+    
+    private func invalidate(with error: CameraError?) {
         guard isValid else { return }
-        
+
+        keyValueObservations.forEach { $0.invalidate() }
         notificationObservers.forEach(NotificationCenter.default.removeObserver(_:))
         
-        keyValueObservations.forEach { $0.invalidate() }
-        
-        session.beginConfiguration()
-        retainedLayers.allObjects.forEach {
+        videoPreviewLayers.allObjects.forEach {
             $0.session = nil
             $0.removeFromSuperlayer()
         }
-        retainedLayers.removeAllObjects()
+        videoPreviewLayers.removeAllObjects()
+        
+        session.beginConfiguration()
         session.inputs.forEach(session.removeInput(_:))
         session.outputs.forEach(session.removeOutput(_:))
         session.commitConfiguration()
@@ -232,189 +212,200 @@ public class Camera {
         
         isValid = false
         
-        delegate?.cameraWasDisconnected(self)
+        if let error = error {
+            didBecomeInvalid?(error)
+        }
     }
     
-    public func startRunning() {
+    public func invalidate() {
+        invalidate(with: .cancelled)
+    }
+    
+    public func start() {
+        validationCheck()
+        
+        guard !isRunning else {
+            return
+        }
+        
         session.startRunning()
     }
     
-    public func stopRunning() {
+    public func stop() {
+        guard isRunning else {
+            return
+        }
+        
         session.stopRunning()
     }
     
-    @discardableResult
-    public func disableFrameOutput() -> Bool {
-        guard let output = frameOutput else { return true }
-        do {
-            try device.lockForConfiguration()
-            session.beginConfiguration()
-            session.removeOutput(output.output)
-            session.commitConfiguration()
-            device.unlockForConfiguration()
-            
-            frameOutput = nil
-            
-            if let observer = flipOptionsForFrameOutput {
-                NotificationCenter.default.removeObserver(observer)
-                flipOptionsForFrameOutput = nil
-            }
-            
-            return true
-        } catch {
-            return false
-        }
+    public func canSetPreset(_ preset: AVCaptureSession.Preset) -> Bool {
+        session.canSetSessionPreset(preset)
     }
     
-    @discardableResult
-    public func enableFrameOutput(queue: DispatchQueue, discardsLateFrames: Bool = true) -> Bool {
-        guard !isFrameOutputEnabled else {
-            return true
-        }
-        guard (try? device.lockForConfiguration()) != nil else {
-            return false
-        }
-        
-        session.beginConfiguration()
-        
-        defer {
-            session.commitConfiguration()
-            device.unlockForConfiguration()
-        }
-        
-        if let output = FrameOutput(session: session,
-                                    queue: queue,
-                                    discardsLateFrames: discardsLateFrames)
-        {
-            output.frameHandler = { [weak self] in
-                guard let self = self, self.isFrameOutputEnabled else { return }
-                self.frameOutputHandler?($0)
-            }
-            output.applyFlipOptions(flipOptions)
-            
-            frameOutput = output
-            
-            return true
-        } else {
-            return false
-        }
-    }
+    // MARK: - Format
     
     @discardableResult
     public func setFormat(_ format: AVCaptureDevice.Format) -> Bool {
-        do {
-            try device.lockForConfiguration()
-            session.beginConfiguration()
-            device.activeFormat = format
-            session.commitConfiguration()
-            device.unlockForConfiguration()
-            
+        validationCheck()
+        
+        guard videoDevice.activeFormat != format else {
             return true
-        } catch {
-            return false
+        }
+        
+        return configure {
+            videoDevice.activeFormat = format
         }
     }
+    
+    // MARK: - Frame Rate Range
     
     @discardableResult
     public func setFrameRateRange(_ frameRateRange: AVFrameRateRange) -> Bool {
-        do {
-            try device.lockForConfiguration()
-            session.beginConfiguration()
-            device.activeVideoMinFrameDuration = frameRateRange.minFrameDuration
-            session.commitConfiguration()
-            device.unlockForConfiguration()
-            
+        validationCheck()
+        
+        guard videoDevice.activeVideoMinFrameDuration != frameRateRange.minFrameDuration else {
             return true
-        } catch {
+        }
+        
+        return configure {
+            videoDevice.activeVideoMinFrameDuration = frameRateRange.minFrameDuration
+        }
+    }
+    
+    // MARK: - Audio Device
+    
+    @discardableResult
+    public func removeAudioDevice() -> Bool {
+        guard let audioInput = audioInput else {
             return false
+        }
+        
+        if removeInput(audioInput) {
+            self.audioInput = nil
+            audioDeviceRemoveHandler?()
+            return true
+        }
+        return false
+    }
+    
+    @discardableResult
+    public func setAudioDevice(_ audioDevice: AVCaptureDevice) -> Bool {
+        guard audioDevice.hasMediaType(.audio), removeAudioDevice(),
+              let audioInput = try? AVCaptureDeviceInput(device: audioDevice)
+        else {
+            return false
+        }
+        
+        if addInput(audioInput) {
+            self.audioInput = audioInput
+            return true
+        }
+        return false
+    }
+    
+    // MARK: - Output
+    
+    @discardableResult
+    public func addOutput(_ output: Output) -> Bool {
+        validationCheck()
+        
+        guard session.canAddOutput(output.captureOutput) else {
+            return false
+        }
+        
+        return configure {
+            session.addOutput(output.captureOutput)
+            
+            if let connection = output.captureOutput.connection(with: .video) {
+                connection.applyFlipOptions(flipOptions)
+            }
         }
     }
     
     @discardableResult
-    public func setPreset(_ preset: AVCaptureSession.Preset) -> Bool {
-        guard session.canSetSessionPreset(preset) else { return false }
-        session.sessionPreset = preset
-        return true
-    }
-    
-    public func capture(_ completionHandler: @escaping CaptureHandler) {
-        captureOutput.capture(flipOptions: flipOptions, completionHandler)
-    }
-    
-    #if os(macOS)
-    public func startRecording() -> Bool {
-        movieOutput.startRecording(flipOptions: flipOptions)
-    }
-    
-    public func pauseRecording() {
-        movieOutput.pauseRecording()
-    }
-    
-    public func resumeRecording() {
-        movieOutput.resumeRecording()
-    }
-    
-    public func stopRecording() {
-        movieOutput.stopRecording()
-    }
-    #endif
-    
-    public func createPreviewLayer() -> AVCaptureVideoPreviewLayer {
-        let layer = AVCaptureVideoPreviewLayer(session: session)
+    public func removeOutput(_ output: Output) -> Bool {
+        guard session.outputs.contains(output.captureOutput) else {
+            return false
+        }
         
-        layer.connection?.applyFlipOptions(flipOptions)
+        return configure {
+            session.removeOutput(output.captureOutput)
+        }
+    }
+    
+    // MARK: - Input
+    
+    @discardableResult
+    public func addInput(_ input: Input) -> Bool {
+        validationCheck()
         
-        notificationObservers += [
-            NotificationCenter.default.addObserver(
-                forName: ._flipOptionsWereChanged,
-                object: self,
-                queue: .main
-            ) { [weak layer] noti in
-                guard let layer = layer, let camera = noti.object as? Camera else { return }
-                layer.connection?.applyFlipOptions(camera.flipOptions)
+        guard session.canAddInput(input.captureInput) else {
+            return false
+        }
+        
+        return configure {
+            session.addInput(input.captureInput)
+        }
+    }
+    
+    @discardableResult
+    public func removeInput(_ input: Input) -> Bool {
+        guard session.inputs.contains(input.captureInput) else {
+            return false
+        }
+        
+        return configure {
+            session.removeInput(input.captureInput)
+            
+            if input.captureInput == videoInput {
+                invalidate()
             }
-        ]
-        
-        retainedLayers.add(layer)
-        
-        return layer
+        }
     }
     
-}
-
-extension Camera {
+    // MARK: - Video Preview Layer
     
-    public var inputs: [AVCaptureInput] {
-        session.inputs.filter { $0 != deviceInput }
+    public func createVideoPreviewLayer() -> AVCaptureVideoPreviewLayer {
+        validationCheck()
+        
+        let videoPreviewLayer = AVCaptureVideoPreviewLayer(session: session)
+        videoPreviewLayer.connection?.applyFlipOptions(flipOptions)
+        videoPreviewLayers.add(videoPreviewLayer)
+        
+        let observer = NotificationCenter.default.addObserver(
+            forName: ._flipOptionsWereChanged,
+            object: self,
+            queue: .main
+        ) { [weak videoPreviewLayer] noti in
+            guard let videoPreviewLayer = videoPreviewLayer, let camera = noti.object as? Camera else {
+                return
+            }
+            
+            videoPreviewLayer.connection?.applyFlipOptions(camera.flipOptions)
+        }
+        notificationObservers.append(observer)
+        
+        return videoPreviewLayer
     }
-    public var outputs: [AVCaptureOutput] {
+    
+    @discardableResult
+    public func createVideoPreviewLayer(insertInto superLayer: CALayer, at index: UInt32? = nil) -> AVCaptureVideoPreviewLayer {
+        let videoPreviewLayer = createVideoPreviewLayer()
+        
         #if os(macOS)
-        session.outputs.filter { $0 != captureOutput.output && $0 != frameOutput?.output && $0 != movieOutput.output }
-        #else
-        session.outputs.filter { $0 != captureOutput.output && $0 != frameOutput?.output }
+        videoPreviewLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         #endif
-    }
-    
-    @discardableResult
-    public func addInput(_ input: AVCaptureInput) -> Bool {
-        guard session.canAddInput(input) else { return false }
-        session.addInput(input)
-        return true
-    }
-    
-    public func removeInput(_ input: AVCaptureInput) {
-        session.removeInput(input)
-    }
-    
-    @discardableResult
-    public func addOutput(_ output: AVCaptureOutput) -> Bool {
-        guard session.canAddOutput(output) else { return false }
-        session.addOutput(output)
-        return true
-    }
-    
-    public func removeOutput(_ output: AVCaptureOutput) {
-        session.removeOutput(output)
+        
+        videoPreviewLayer.frame = superLayer.bounds
+        
+        if let index = index {
+            superLayer.insertSublayer(videoPreviewLayer, at: index)
+        } else {
+            superLayer.addSublayer(videoPreviewLayer)
+        }
+        
+        return videoPreviewLayer
     }
     
 }

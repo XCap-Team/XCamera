@@ -2,17 +2,17 @@
 //  URL+Ext.swift
 //  
 //
-//  Created by chen on 2021/4/21.
+//  Created by scchn on 2021/9/27.
 //
 
 import Foundation
 
 extension URL {
     
-    static func tempPathURL() -> URL? {
+    static func temporaryFileURL(pathExtension: String) -> URL {
         let directory = NSTemporaryDirectory()
-        let fileName = NSUUID().uuidString
-        return NSURL.fileURL(withPathComponents: [directory, fileName])
+        let fileName = NSUUID().uuidString.appending(pathExtension)
+        return NSURL.fileURL(withPathComponents: [directory, fileName])!
     }
     
 }
