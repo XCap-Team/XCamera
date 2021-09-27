@@ -13,6 +13,7 @@ class MovieOutput: NSObject, AVCaptureFileOutputRecordingDelegate, Outputable {
     private var _output = AVCaptureMovieFileOutput()
     
     var output: AVCaptureOutput { _output }
+    
     var isRecording: Bool { _output.isRecording }
     var isPaused: Bool { _output.isRecordingPaused }
     
@@ -29,6 +30,11 @@ class MovieOutput: NSObject, AVCaptureFileOutputRecordingDelegate, Outputable {
         super.init()
         
         session.addOutput(output)
+    }
+    
+    func applyFlipOptions(_ flipOptions: FlipOptions) {
+        guard let connection = _output.connection(with: .video) else { return }
+        connection.applyFlipOptions(flipOptions)
     }
     
     // MARK: - Recording

@@ -79,6 +79,7 @@ public class Camera {
     private var notificationObservers: [NSObjectProtocol] = []
     private var keyValueObservations: [NSKeyValueObservation] = []
     private var retainedLayers = NSHashTable<AVCaptureVideoPreviewLayer>(options: [.weakMemory])
+    private var flipOptionsForFrameOutput: NSObjectProtocol?
     
     weak
     public var delegate: CameraDelegate?
@@ -98,12 +99,19 @@ public class Camera {
     
     // Flip
     public var flipOptions: FlipOptions = .default {
-        didSet { NotificationCenter.default.post(name: ._flipOptionsWereChanged, object: self) }
+        didSet {
+            #if os(macOS)
+            movieOutput.applyFlipOptions(flipOptions)
+            #endif
+            
+            frameOutput?.applyFlipOptions(flipOptions)
+            
+            NotificationCenter.default.post(name: ._flipOptionsWereChanged, object: self)
+        }
     }
     
     // Frame
     public var isFrameOutputEnabled: Bool { frameOutput != nil }
-    /// Main Queue。
     public var frameOutputHandler: ((CMSampleBuffer) -> Void)?
     
     // Format
@@ -220,7 +228,6 @@ public class Camera {
         session.inputs.forEach(session.removeInput(_:))
         session.outputs.forEach(session.removeOutput(_:))
         session.commitConfiguration()
-        
         session.stopRunning()
         
         isValid = false
@@ -241,9 +248,18 @@ public class Camera {
         guard let output = frameOutput else { return true }
         do {
             try device.lockForConfiguration()
+            session.beginConfiguration()
             session.removeOutput(output.output)
-            frameOutput = nil
+            session.commitConfiguration()
             device.unlockForConfiguration()
+            
+            frameOutput = nil
+            
+            if let observer = flipOptionsForFrameOutput {
+                NotificationCenter.default.removeObserver(observer)
+                flipOptionsForFrameOutput = nil
+            }
+            
             return true
         } catch {
             return false
@@ -251,29 +267,48 @@ public class Camera {
     }
     
     @discardableResult
-    public func enableFrameOutput() -> Bool {
-        guard !isFrameOutputEnabled else { return true }
-        guard (try? device.lockForConfiguration()) != nil else { return false }
-        
-        defer { device.unlockForConfiguration() }
-        
-        guard let output = FrameOutput(session: session) else { return false }
-        
-        output.frameHandler = { [weak self] in
-            guard let self = self, self.isFrameOutputEnabled else { return }
-            self.frameOutputHandler?($0)
+    public func enableFrameOutput(queue: DispatchQueue, discardsLateFrames: Bool = true) -> Bool {
+        guard !isFrameOutputEnabled else {
+            return true
         }
-        frameOutput = output
+        guard (try? device.lockForConfiguration()) != nil else {
+            return false
+        }
         
-        return true
+        session.beginConfiguration()
+        
+        defer {
+            session.commitConfiguration()
+            device.unlockForConfiguration()
+        }
+        
+        if let output = FrameOutput(session: session,
+                                    queue: queue,
+                                    discardsLateFrames: discardsLateFrames)
+        {
+            output.frameHandler = { [weak self] in
+                guard let self = self, self.isFrameOutputEnabled else { return }
+                self.frameOutputHandler?($0)
+            }
+            output.applyFlipOptions(flipOptions)
+            
+            frameOutput = output
+            
+            return true
+        } else {
+            return false
+        }
     }
     
     @discardableResult
     public func setFormat(_ format: AVCaptureDevice.Format) -> Bool {
         do {
             try device.lockForConfiguration()
+            session.beginConfiguration()
             device.activeFormat = format
+            session.commitConfiguration()
             device.unlockForConfiguration()
+            
             return true
         } catch {
             return false
@@ -284,8 +319,11 @@ public class Camera {
     public func setFrameRateRange(_ frameRateRange: AVFrameRateRange) -> Bool {
         do {
             try device.lockForConfiguration()
+            session.beginConfiguration()
             device.activeVideoMinFrameDuration = frameRateRange.minFrameDuration
+            session.commitConfiguration()
             device.unlockForConfiguration()
+            
             return true
         } catch {
             return false
