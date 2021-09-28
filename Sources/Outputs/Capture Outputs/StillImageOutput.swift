@@ -5,11 +5,11 @@
 //  Created by chen on 2021/4/21.
 //
 
+#if os(macOS)
 import Foundation
 import AVFoundation
 
 @available(macOS, deprecated: 10.15)
-@available(iOS, deprecated: 10.0)
 class StillImageOutput: CaptureOutput {
     
     private var output = AVCaptureStillImageOutput()
@@ -50,3 +50,4 @@ class StillImageOutput: CaptureOutput {
     }
     
 }
+#endif

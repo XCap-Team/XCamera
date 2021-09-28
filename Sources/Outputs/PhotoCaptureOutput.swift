@@ -15,11 +15,15 @@ public class PhotoCaptureOutput: CaptureOutput {
     public var captureOutput: AVCaptureOutput { output.captureOutput }
     
     public init() {
-        if #available(macOS 10.15, iOS 10.0, *) {
+        #if os(macOS)
+        if #available(macOS 10.15, *) {
             output = PhotoOutput()
         } else {
             output = StillImageOutput()
         }
+        #else
+        output = PhotoOutput()
+        #endif
     }
     
     public func capture(_ completionHandler: @escaping CaptureOutputHandler) {
