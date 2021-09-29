@@ -2,7 +2,7 @@
 //  SingleUseVideoWriter.swift
 //  
 //
-//  Created by ViTiny on 2021/9/29.
+//  Created by scchn on 2021/9/29.
 //
 
 import Foundation
