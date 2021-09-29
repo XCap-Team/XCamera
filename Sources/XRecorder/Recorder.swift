@@ -27,8 +27,10 @@ extension Recorder {
     }
     
     public enum VideoSettings {
-        case auto(AVVideoCodecType, CMFormatDescription)
-        case manual(AVVideoCodecType, CGSize)
+        /// The third valid is Expected Source Frame Rate
+        case auto(AVVideoCodecType, CMFormatDescription, Int?)
+        /// The third valid is Expected Source Frame Rate
+        case manual(AVVideoCodecType, CGSize, Int?)
     }
 
     public enum AudioSettings {
@@ -126,7 +128,7 @@ public class Recorder {
     // MARK: - Video
     
     @discardableResult
-    public func append(frame videoSampleBuffer: CMSampleBuffer, drawingHandler: ((CGRect) -> Void)?) -> Bool {
+    public func append(frame videoSampleBuffer: CMSampleBuffer, drawingHandler: ((CGRect) -> Void)? = nil) -> Bool {
         guard let writer = videoWriter, status != .finishing else {
             return false
         }
