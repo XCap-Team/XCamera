@@ -24,14 +24,6 @@ public class VideoDataOutput: NSObject, Output {
         output.setSampleBufferDelegate(self, queue: queue)
     }
     
-    public func applyFlipOptions(_ flipOptions: FlipOptions) {
-        guard let connection = output.connection(with: .video) else {
-            return
-        }
-        
-        connection.applyFlipOptions(flipOptions)
-    }
-    
 }
 
 extension VideoDataOutput: AVCaptureVideoDataOutputSampleBufferDelegate {

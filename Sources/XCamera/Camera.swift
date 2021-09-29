@@ -8,10 +8,6 @@
 import Foundation
 import AVFoundation
 
-extension Notification.Name {
-    static let _flipOptionsWereChanged = Notification.Name("com.scchn.XCamera._flipOptionsWereChanged")
-}
-
 public enum CameraError: Error {
     case runtimeError
     case disconnected
@@ -46,16 +42,21 @@ public class Camera {
     private var keyValueObservations: [NSKeyValueObservation] = []
     private var notificationObservers: [NSObjectProtocol] = []
     
-    private var videoPreviewLayers = NSHashTable<AVCaptureVideoPreviewLayer>(options: [.weakMemory])
+    private let videoPreviewLayers: NSHashTable<AVCaptureVideoPreviewLayer> = .weakObjects()
     
     public var flipOptions: FlipOptions = .default {
         didSet { didChangeFlipOptions() }
     }
-    
-    private(set)
-    public var isValid: Bool = true
+    public var ignoreFlipOptions: Bool = false {
+        didSet { didChangeFlipOptions() }
+    }
+    private var realFlipOptions: FlipOptions? {
+        ignoreFlipOptions ? nil : flipOptions
+    }
     
     // Device
+    private(set)
+    public var isValid: Bool = true
     public var videoDevice: AVCaptureDevice { videoInput.device }
     public var audioDevice: AVCaptureDevice? { audioInput?.device }
     
@@ -97,10 +98,19 @@ public class Camera {
         session.beginConfiguration()
         session.addInput(videoInput)
         session.commitConfiguration()
+        
         self.videoInput = videoInput
         
         setupKeyValueObservations()
         setupNotificationObservers()
+    }
+    
+    public convenience init?(uniqueID: String) {
+        guard let device = AVCaptureDevice(uniqueID: uniqueID) else {
+            return nil
+        }
+        
+        self.init(videoDevice: device)
     }
     
     deinit {
@@ -161,14 +171,12 @@ public class Camera {
     }
     
     private func didChangeFlipOptions() {
-        session.outputs.forEach { output in
-            guard let connection = output.connection(with: .video) else {
-                return
-            }
-            connection.applyFlipOptions(flipOptions)
-        }
+        session.outputs
+            .compactMap { $0.connection(with:.video) }
+            .forEach { $0.flip(realFlipOptions) }
         
-        NotificationCenter.default.post(name: ._flipOptionsWereChanged, object: self)
+        videoPreviewLayers.allObjects
+            .forEach { $0.connection?.flip(realFlipOptions) }
     }
     
     private func validationCheck() {
@@ -318,7 +326,7 @@ public class Camera {
             session.addOutput(output.captureOutput)
             
             if let connection = output.captureOutput.connection(with: .video) {
-                connection.applyFlipOptions(flipOptions)
+                connection.flip(realFlipOptions)
             }
         }
     }
@@ -370,21 +378,10 @@ public class Camera {
         validationCheck()
         
         let videoPreviewLayer = AVCaptureVideoPreviewLayer(session: session)
-        videoPreviewLayer.connection?.applyFlipOptions(flipOptions)
-        videoPreviewLayers.add(videoPreviewLayer)
         
-        let observer = NotificationCenter.default.addObserver(
-            forName: ._flipOptionsWereChanged,
-            object: self,
-            queue: .main
-        ) { [weak videoPreviewLayer] noti in
-            guard let videoPreviewLayer = videoPreviewLayer, let camera = noti.object as? Camera else {
-                return
-            }
-            
-            videoPreviewLayer.connection?.applyFlipOptions(camera.flipOptions)
-        }
-        notificationObservers.append(observer)
+        videoPreviewLayer.connection?.flip(realFlipOptions)
+        
+        videoPreviewLayers.add(videoPreviewLayer)
         
         return videoPreviewLayer
     }

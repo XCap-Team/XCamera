@@ -10,26 +10,28 @@ import AVFoundation
 
 extension AVCaptureConnection {
     
-    func applyFlipOptions(_ flipOptions: FlipOptions) {
-        guard isVideoMirroringSupported && isVideoOrientationSupported else { return }
-                
-        if automaticallyAdjustsVideoMirroring {
-            automaticallyAdjustsVideoMirroring = false
+    func flip(_ flipOptions: FlipOptions?) {
+        guard let flipOptions = flipOptions else {
+            automaticallyAdjustsVideoMirroring = true
+            return
         }
         
-        switch flipOptions {
-        case .mirrored:
-            isVideoMirrored = true
-            videoOrientation = .portrait
-        case .upsideDown:
-            isVideoMirrored = true
-            videoOrientation = .portraitUpsideDown
-        case [.mirrored, .upsideDown]:
-            isVideoMirrored = false
-            videoOrientation = .portraitUpsideDown
-        default:
-            isVideoMirrored = false
-            videoOrientation = .portrait
+        automaticallyAdjustsVideoMirroring = false
+        
+        if isVideoMirroringSupported && isVideoOrientationSupported {
+            if flipOptions == .mirrored {
+                isVideoMirrored = true
+                videoOrientation = .portrait
+            } else if flipOptions == .upsideDown {
+                isVideoMirrored = true
+                videoOrientation = .portraitUpsideDown
+            } else if flipOptions.contains([.mirrored, .upsideDown]) {
+                isVideoMirrored = false
+                videoOrientation = .portraitUpsideDown
+            } else {
+                isVideoMirrored = false
+                videoOrientation = .portrait
+            }
         }
     }
 
