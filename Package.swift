@@ -7,9 +7,13 @@ let package = Package(
     platforms: [.macOS(.v10_10), .iOS(.v10)],
     products: [
         .library(name: "XCamera", targets: ["XCamera"]),
+        .library(name: "XRecorder", targets: ["XRecorder"])
     ],
     targets: [
-        .target(name: "XCamera", path: "Sources"),
+        .target(name: "XCamera"),
         .testTarget(name: "XCameraTests", dependencies: ["XCamera"]),
+        
+        .target(name: "XRecorder", dependencies: ["XCamera"]),
+        .testTarget(name: "XRecorderTests", dependencies: ["XRecorder"]),
     ]
 )
