@@ -64,23 +64,31 @@ public class MovieFileOutput: NSObject, Output {
 extension MovieFileOutput: AVCaptureFileOutputRecordingDelegate {
     
     public func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo url: URL, from conn: [AVCaptureConnection]) {
-        didStart?(url)
+        DispatchQueue.main.async {
+            self.didStart?(url)
+        }
     }
     
     #if os(macOS)
     public func fileOutput(_ output: AVCaptureFileOutput, didPauseRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
-        didPause?(fileURL)
+        DispatchQueue.main.async {
+            self.didPause?(fileURL)
+        }
     }
     #endif
     
     #if os(macOS)
     public func fileOutput(_ output: AVCaptureFileOutput, didResumeRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
-        didResume?(fileURL)
+        DispatchQueue.main.async {
+            self.didResume?(fileURL)
+        }
     }
     #endif
     
     public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo url: URL, from conn: [AVCaptureConnection], error err: Error?) {
-        didFinish?(url, err)
+        DispatchQueue.main.async {
+            self.didFinish?(url, err)
+        }
     }
     
 }
