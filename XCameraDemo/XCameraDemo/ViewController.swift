@@ -48,10 +48,10 @@ class ViewController: NSViewController {
     }
     
     private func setupUI() {
-        let formatNames = camera.formats.map { format -> String in
-            let name = format.name ?? "-"
+        let formatNames = camera.formats.enumerated().map { index, format -> String in
+            let name = "\(index + 1). " + (format.name ?? "Unknown")
             let dimensions = format.dimensions
-            return "\(name) : \(Int(dimensions.width)) x \(Int(dimensions.height))"
+            return "\(name) (\(Int(dimensions.width)) x \(Int(dimensions.height)))"
         }
         formatPopUpButton.removeAllItems()
         formatPopUpButton.addItems(withTitles: formatNames)
@@ -102,7 +102,6 @@ class ViewController: NSViewController {
         else {
             return
         }
-        
         formatPopUpButton.selectItem(at: index)
     }
     
@@ -129,19 +128,15 @@ class ViewController: NSViewController {
     // MARK: -
 
     @IBAction func captureButtonAction(_ sender: Any) {
-        photoOutput.capture { result in
-            guard let pixelBuffer = try? result.get(),
-                  let image = NSImage(cvPixelBuffer: pixelBuffer),
-                  let data = image.tiffRepresentation
-            else {
-                return self.showAlert(title: "Capture failed")
+        photoOutput.captureImage { result in
+            guard let image = try? result.get(), let data = image.tiffRepresentation else {
+                return  self.showAlert(title: "Capture failed")
             }
             
             self.openSavePanel(with: .tiff) { url in
                 guard let url = url else {
                     return
                 }
-                
                 try? data.write(to: url)
             }
         }
