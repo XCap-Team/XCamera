@@ -49,9 +49,9 @@ class ViewController: NSViewController {
     
     private func setupUI() {
         let formatNames = camera.formats.enumerated().map { index, format -> String in
-            let name = "\(index + 1). " + (format.name ?? "Unknown")
             let dimensions = format.dimensions
-            return "\(name) (\(Int(dimensions.width)) x \(Int(dimensions.height)))"
+            let dimensionsDescription = "\(Int(dimensions.width)) x \(Int(dimensions.height))"
+            return "\(index + 1). \(format.name ?? "Unknown") (\(dimensionsDescription))"
         }
         formatPopUpButton.removeAllItems()
         formatPopUpButton.addItems(withTitles: formatNames)
@@ -91,6 +91,12 @@ class ViewController: NSViewController {
             self?.updateFormatPopUpButton()
         }
         
+        camera.didBecomeInvalid = { [weak self] error in
+            self?.showAlert(title: "Bye : \(error)") {
+                NSApp.terminate(nil)
+            }
+        }
+        
         camera.addOutput(photoOutput)
         camera.addOutput(movieFileOutput)
         camera.start()
@@ -107,11 +113,13 @@ class ViewController: NSViewController {
     
     // MARK: -
     
-    private func showAlert(title: String) {
+    private func showAlert(title: String, _ handler: (() -> Void)? = nil) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = ""
-        alert.beginSheetModal(for: view.window!)
+        alert.beginSheetModal(for: view.window!) { _ in
+            handler?()
+        }
     }
     
     private func openSavePanel(with type: UTType, _ completionHandler: @escaping (URL?) -> Void) {
@@ -130,7 +138,8 @@ class ViewController: NSViewController {
     @IBAction func captureButtonAction(_ sender: Any) {
         photoOutput.captureImage { result in
             guard let image = try? result.get(), let data = image.tiffRepresentation else {
-                return  self.showAlert(title: "Capture failed")
+                self.showAlert(title: "Capture failed")
+                return
             }
             
             self.openSavePanel(with: .tiff) { url in
