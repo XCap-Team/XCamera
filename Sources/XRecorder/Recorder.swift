@@ -27,10 +27,8 @@ extension Recorder {
     }
     
     public enum VideoSettings {
-        /// The third valid is Expected Source Frame Rate
-        case auto(AVVideoCodecType, CMFormatDescription, Int?)
-        /// The third valid is Expected Source Frame Rate
-        case manual(AVVideoCodecType, CGSize, Int?)
+        case auto(AVVideoCodecType, CMFormatDescription)
+        case manual(AVVideoCodecType, CGSize)
     }
 
     public enum AudioSettings {

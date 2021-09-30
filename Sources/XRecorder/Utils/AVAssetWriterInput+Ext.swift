@@ -13,26 +13,17 @@ extension AVAssetWriterInput {
     convenience init(videoSettings: Recorder.VideoSettings) {
         var outputSettings: [String: Any]
         var sourceFormatHint: CMFormatDescription?
-        var frameRateHint: Int?
         
         switch videoSettings {
-        case let .auto(codec, formatHint, frameRate):
+        case let .auto(codec, formatHint):
             outputSettings = [AVVideoCodecKey: codec]
-            frameRateHint = frameRate
             sourceFormatHint = formatHint
             
-        case let .manual(codec, dimensions, frameRate):
+        case let .manual(codec, dimensions):
             outputSettings = [
                 AVVideoCodecKey: codec,
                 AVVideoWidthKey: Int(dimensions.width),
                 AVVideoHeightKey: Int(dimensions.height),
-            ]
-            frameRateHint = frameRate
-        }
-        
-        if let expectedFrameRate = frameRateHint, expectedFrameRate >= 60 {
-            outputSettings[AVVideoCompressionPropertiesKey] = [
-                AVVideoExpectedSourceFrameRateKey: expectedFrameRate
             ]
         }
         
