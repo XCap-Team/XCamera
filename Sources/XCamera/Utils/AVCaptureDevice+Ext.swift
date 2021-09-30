@@ -59,7 +59,15 @@ extension AVCaptureDevice {
 
 extension AVCaptureDevice.Format {
     
-    public var name: String? {
+    public var mediaSubTypeName: String {
+        if #available(macOS 10.15, *) {
+            return formatDescription.mediaSubType.rawValue.string
+        } else {
+            return CMFormatDescriptionGetMediaSubType(formatDescription).string
+        }
+    }
+    
+    public var formatName: String? {
         CMFormatDescriptionGetExtension(
             formatDescription,
             extensionKey: kCMFormatDescriptionExtension_FormatName
@@ -69,12 +77,19 @@ extension AVCaptureDevice.Format {
     public var dimensions: CGSize {
         let mediaType = CMFormatDescriptionGetMediaType(formatDescription)
         
-        if mediaType == kCMMediaType_Video || mediaType == kCMMediaType_Muxed {
-            let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-            return CGSize(width: Int(dimensions.width), height: Int(dimensions.height))
+        guard mediaType == kCMMediaType_Video || mediaType == kCMMediaType_Muxed else {
+            return .zero
         }
         
-        return .zero
+        let dimensions: CMVideoDimensions = {
+            if #available(macOS 10.15, *) {
+                return formatDescription.dimensions
+            } else {
+                return CMVideoFormatDescriptionGetDimensions(formatDescription)
+            }
+        }()
+        
+        return CGSize(width: Int(dimensions.width), height: Int(dimensions.width))
     }
     
 }

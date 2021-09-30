@@ -51,7 +51,7 @@ class ViewController: NSViewController {
         let formatNames = camera.formats.enumerated().map { index, format -> String in
             let dimensions = format.dimensions
             let dimensionsDescription = "\(Int(dimensions.width)) x \(Int(dimensions.height))"
-            return "\(index + 1). \(format.name ?? "Unknown") (\(dimensionsDescription))"
+            return "\(index + 1). \(format.formatName ?? format.mediaSubTypeName) (\(dimensionsDescription))"
         }
         formatPopUpButton.removeAllItems()
         formatPopUpButton.addItems(withTitles: formatNames)
