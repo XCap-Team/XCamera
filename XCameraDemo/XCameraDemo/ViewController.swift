@@ -61,7 +61,7 @@ class ViewController: NSViewController {
         layer.backgroundColor = .black
         previewView.layer = layer
         previewView.wantsLayer = true
-        camera.createVideoPreviewLayer(insertInto: layer)
+        camera.createVideoPreviewLayer(into: layer)
     }
     
     private func setupCamera() {

@@ -33,7 +33,11 @@ extension Camera {
     
 }
 
-public class Camera {
+open class Camera {
+    
+    #if DEBUG
+    public static var showDeinitLog = true
+    #endif
     
     private let session = AVCaptureSession()
     private let videoInput: AVCaptureDeviceInput
@@ -44,48 +48,55 @@ public class Camera {
     
     private let videoPreviewLayers: NSHashTable<AVCaptureVideoPreviewLayer> = .weakObjects()
     
-    public var flipOptions: FlipOptions = .default {
+    // MARK: - Deivce Info
+    
+    open var videoDevice: AVCaptureDevice { videoInput.device }
+    open var audioDevice: AVCaptureDevice? { audioInput?.device }
+    open var preset: AVCaptureSession.Preset {
+        get { session.sessionPreset }
+        set { session.sessionPreset = newValue }
+    }
+    
+    private(set)
+    open var isValid: Bool = true
+    open var isRunning: Bool { session.isRunning }
+    open var name: String { videoDevice.localizedName }
+    open var uniqueID: String { videoDevice.uniqueID }
+    open var modelID: String { videoDevice.modelID }
+    
+    @available(iOS 14.0, *)
+    open var manufacturer: String { videoDevice.manufacturer }
+    
+    // MARK: - Format
+    
+    open var formats: [AVCaptureDevice.Format] { videoDevice.formats }
+    open var activeFormat: AVCaptureDevice.Format { videoDevice.activeFormat }
+    
+    // MARK: - Frame-Rate Range
+    
+    open var frameRates: [AVFrameRateRange] { videoDevice.activeFormat.videoSupportedFrameRateRanges }
+    open var activeFrameRate: AVFrameRateRange? { videoDevice.activeFrameRateRange }
+    
+    // MARK: - Flip Options
+    
+    open var flipOptions: FlipOptions = .default {
         didSet { didChangeFlipOptions() }
     }
-    public var ignoreFlipOptions: Bool = false {
+    open var ignoreFlipOptions: Bool = false {
         didSet { didChangeFlipOptions() }
     }
     private var realFlipOptions: FlipOptions? {
         ignoreFlipOptions ? nil : flipOptions
     }
     
-    // Device
-    private(set)
-    public var isValid: Bool = true
-    public var videoDevice: AVCaptureDevice { videoInput.device }
-    public var audioDevice: AVCaptureDevice? { audioInput?.device }
+    // MARK: - Event Handlers
     
-    // Deivce Info
-    public var isRunning: Bool { session.isRunning }
-    public var name: String { videoDevice.localizedName }
-    public var uniqueID: String { videoDevice.uniqueID }
-    public var modelID: String { videoDevice.modelID }
-    public var preset: AVCaptureSession.Preset {
-        get { session.sessionPreset }
-        set { session.sessionPreset = newValue }
-    }
+    open var formatUpdateHandler: ((AVCaptureDevice.Format) -> Void)?
+    open var frameRateUpdateHandler: ((AVFrameRateRange) -> Void)?
+    open var audioInputRemovalHandler: (() -> Void)?
+    open var didBecomeInvalid: ((CameraError) -> Void)?
     
-    @available(iOS 14.0, *)
-    public var manufacturer: String { videoDevice.manufacturer }
-    
-    // Format
-    public var formats: [AVCaptureDevice.Format] { videoDevice.formats }
-    public var activeFormat: AVCaptureDevice.Format { videoDevice.activeFormat }
-    
-    // Frame Rate Range
-    public var frameRateRanges: [AVFrameRateRange] { videoDevice.activeFormat.videoSupportedFrameRateRanges }
-    public var activeFrameRateRange: AVFrameRateRange? { videoDevice.activeFrameRateRange }
-    
-    // Event Handlers
-    public var formatUpdateHandler: ((AVCaptureDevice.Format) -> Void)?
-    public var frameRateRangeUpdateHandler: ((AVFrameRateRange) -> Void)?
-    public var audioDeviceRemoveHandler: (() -> Void)?
-    public var didBecomeInvalid: ((CameraError) -> Void)?
+    // MARK: - Init
     
     public init?(videoDevice: AVCaptureDevice) {
         guard videoDevice.hasMediaType(.video),
@@ -117,7 +128,9 @@ public class Camera {
         invalidate(with: nil)
         
         #if DEBUG
-        print("XCamera -> deinit")
+        if Camera.showDeinitLog {
+            print("[XCamera.Camera] \(name) -> Released")
+        }
         #endif
     }
     
@@ -126,19 +139,18 @@ public class Camera {
             \.activeFormat,
              options: [.initial, .new]
         ) { [weak self] device, _ in
-            guard let self = self else { return }
-            self.formatUpdateHandler?(device.activeFormat)
+            self?.formatUpdateHandler?(device.activeFormat)
         }
         
-        let frameRateRangeObservation = videoDevice.observe(
+        let frameRateObservation = videoDevice.observe(
             \.activeVideoMinFrameDuration,
              options: [.initial, .new]
         ) { [weak self] device, _ in
-            guard let self = self, let range = device.activeFrameRateRange else { return }
-            self.frameRateRangeUpdateHandler?(range)
+            guard let range = device.activeFrameRateRange else { return }
+            self?.frameRateUpdateHandler?(range)
         }
         
-        keyValueObservations = [formatObservation, frameRateRangeObservation]
+        keyValueObservations = [formatObservation, frameRateObservation]
     }
     
     private func setupNotificationObservers() {
@@ -149,7 +161,9 @@ public class Camera {
             object: nil,
             queue: .main
         ) { [weak self] noti in
-            guard let self = self, self.session == noti.object as? AVCaptureSession else { return }
+            guard let self = self, self.session == noti.object as? AVCaptureSession else {
+                return
+            }
             self.invalidate(with: .runtimeError)
         }
         
@@ -158,12 +172,13 @@ public class Camera {
             object: nil,
             queue: .main
         ) { [weak self] noti in
-            guard let self = self, let device = noti.object as? AVCaptureDevice else { return }
-            
+            guard let self = self, let device = noti.object as? AVCaptureDevice else {
+                return
+            }
             if device == self.videoDevice {
                 self.invalidate(with: .disconnected)
             } else if device == self.audioDevice {
-                self.removeAudioDevice()
+                self.removeAudioInput()
             }
         }
         
@@ -179,13 +194,13 @@ public class Camera {
             .forEach { $0.connection?.flip(realFlipOptions) }
     }
     
-    private func validationCheck() {
-        if !isValid {
-            fatalError("Unavailable camera.")
-        }
+    // MARK: - Utils
+    
+    private func assertValid() {
+        assert(isValid, "Unavailable camera.")
     }
     
-    private func configure(_ configurationHandler: () -> Void) -> Bool {
+    private func configure(_ configurationHandler: () -> Void, errorHandler: ((Error) -> Void)? = nil) -> Bool {
         do {
             try videoDevice.lockForConfiguration()
             session.beginConfiguration()
@@ -196,6 +211,7 @@ public class Camera {
             videoDevice.unlockForConfiguration()
             return true
         } catch {
+            errorHandler?(error)
             return false
         }
     }
@@ -225,12 +241,10 @@ public class Camera {
         }
     }
     
-    public func invalidate() {
-        invalidate(with: .cancelled)
-    }
+    // MARK: - Session
     
-    public func start() {
-        validationCheck()
+    open func start() {
+        assertValid()
         
         guard !isRunning else {
             return
@@ -239,7 +253,7 @@ public class Camera {
         session.startRunning()
     }
     
-    public func stop() {
+    open func stop() {
         guard isRunning else {
             return
         }
@@ -247,15 +261,19 @@ public class Camera {
         session.stopRunning()
     }
     
-    public func canSetPreset(_ preset: AVCaptureSession.Preset) -> Bool {
+    open func canSetPreset(_ preset: AVCaptureSession.Preset) -> Bool {
         session.canSetSessionPreset(preset)
     }
     
-    // MARK: - Format
+    open func invalidate() {
+        invalidate(with: .cancelled)
+    }
+    
+    // MARK: - Video Device Settings
     
     @discardableResult
-    public func setFormat(_ format: AVCaptureDevice.Format) -> Bool {
-        validationCheck()
+    open func setFormat(_ format: AVCaptureDevice.Format) -> Bool {
+        assertValid()
         
         guard videoDevice.activeFormat != format else {
             return true
@@ -266,13 +284,11 @@ public class Camera {
         }
     }
     
-    // MARK: - Frame Rate Range
-    
     @discardableResult
-    public func setFrameRateRange(_ frameRateRange: AVFrameRateRange) -> Bool {
-        validationCheck()
+    open func setFrameRate(_ frameRateRange: AVFrameRateRange) -> Bool {
+        assertValid()
         
-        guard videoDevice.activeVideoMinFrameDuration != frameRateRange.minFrameDuration else {
+        guard videoDevice.activeFrameRateRange != frameRateRange else {
             return true
         }
         
@@ -284,22 +300,22 @@ public class Camera {
     // MARK: - Audio Device
     
     @discardableResult
-    public func removeAudioDevice() -> Bool {
+    open func removeAudioInput() -> Bool {
         guard let audioInput = audioInput else {
             return false
         }
         
         if removeInput(audioInput) {
             self.audioInput = nil
-            audioDeviceRemoveHandler?()
+            audioInputRemovalHandler?()
             return true
         }
         return false
     }
     
     @discardableResult
-    public func setAudioDevice(_ audioDevice: AVCaptureDevice) -> Bool {
-        guard audioDevice.hasMediaType(.audio), removeAudioDevice(),
+    open func setAudioInput(device audioDevice: AVCaptureDevice) -> Bool {
+        guard audioDevice.hasMediaType(.audio), removeAudioInput(),
               let audioInput = try? AVCaptureDeviceInput(device: audioDevice)
         else {
             return false
@@ -315,8 +331,8 @@ public class Camera {
     // MARK: - Output
     
     @discardableResult
-    public func addOutput(_ output: Output) -> Bool {
-        validationCheck()
+    open func addOutput(_ output: Output) -> Bool {
+        assertValid()
         
         guard session.canAddOutput(output.captureOutput) else {
             return false
@@ -332,7 +348,7 @@ public class Camera {
     }
     
     @discardableResult
-    public func removeOutput(_ output: Output) -> Bool {
+    open func removeOutput(_ output: Output) -> Bool {
         guard session.outputs.contains(output.captureOutput) else {
             return false
         }
@@ -345,8 +361,8 @@ public class Camera {
     // MARK: - Input
     
     @discardableResult
-    public func addInput(_ input: Input) -> Bool {
-        validationCheck()
+    open func addInput(_ input: Input) -> Bool {
+        assertValid()
         
         guard session.canAddInput(input.captureInput) else {
             return false
@@ -358,24 +374,20 @@ public class Camera {
     }
     
     @discardableResult
-    public func removeInput(_ input: Input) -> Bool {
+    open func removeInput(_ input: Input) -> Bool {
         guard session.inputs.contains(input.captureInput) else {
             return false
         }
         
         return configure {
             session.removeInput(input.captureInput)
-            
-            if input.captureInput == videoInput {
-                invalidate()
-            }
         }
     }
     
     // MARK: - Video Preview Layer
     
-    public func createVideoPreviewLayer() -> AVCaptureVideoPreviewLayer {
-        validationCheck()
+    open func createVideoPreviewLayer() -> AVCaptureVideoPreviewLayer {
+        assertValid()
         
         let videoPreviewLayer = AVCaptureVideoPreviewLayer(session: session)
         
@@ -387,7 +399,7 @@ public class Camera {
     }
     
     @discardableResult
-    public func createVideoPreviewLayer(insertInto superLayer: CALayer, at index: UInt32? = nil) -> AVCaptureVideoPreviewLayer {
+    open func createVideoPreviewLayer(into superLayer: CALayer, at index: UInt32? = nil) -> AVCaptureVideoPreviewLayer {
         let videoPreviewLayer = createVideoPreviewLayer()
         
         #if os(macOS)
