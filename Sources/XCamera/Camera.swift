@@ -63,6 +63,8 @@ open class Camera {
     open var name: String { videoDevice.localizedName }
     open var uniqueID: String { videoDevice.uniqueID }
     open var modelID: String { videoDevice.modelID }
+    open var vendorID: Int? { videoDevice.vendorID }
+    open var productID: Int? { videoDevice.productID }
     
     @available(iOS 14.0, *)
     open var manufacturer: String { videoDevice.manufacturer }
