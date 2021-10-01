@@ -89,7 +89,7 @@ extension AVCaptureDevice.Format {
             }
         }()
         
-        return CGSize(width: Int(dimensions.width), height: Int(dimensions.width))
+        return CGSize(width: Int(dimensions.width), height: Int(dimensions.height))
     }
     
 }
