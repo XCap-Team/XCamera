@@ -24,8 +24,10 @@ public class MovieFileOutput: NSObject, Output {
     #endif
     
     public var didStart: ((URL) -> Void)?
+    #if os(macOS)
     public var didPause: ((URL) -> Void)?
     public var didResume: ((URL) -> Void)?
+    #endif
     public var didFinish: ((URL, Error?) -> Void)?
     
     // MARK: - Init
@@ -47,9 +49,7 @@ public class MovieFileOutput: NSObject, Output {
     public func pauseRecording() {
         output.pauseRecording()
     }
-    #endif
     
-    #if os(macOS)
     public func resumeRecording() {
         output.resumeRecording()
     }
@@ -75,9 +75,7 @@ extension MovieFileOutput: AVCaptureFileOutputRecordingDelegate {
             self.didPause?(fileURL)
         }
     }
-    #endif
     
-    #if os(macOS)
     public func fileOutput(_ output: AVCaptureFileOutput, didResumeRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
         DispatchQueue.main.async {
             self.didResume?(fileURL)
